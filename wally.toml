@@ -1,0 +1,10 @@
+[package]
+name = "divinenot/sequena"
+version = "0.1.0"
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+license = "MIT"
+
+[dev-dependencies]
+jest = "jsdotlua/jest@3.10.0"
+jest-globals = "jsdotlua/jest-globals@3.10.0"
