@@ -6,11 +6,8 @@
       "$className": "ServerScriptService",
       "testing": {
         "$path": "tests",
-        "packages": {
-          "$path": "DevPackages",
-          "sequena": {
-            "$path": "default.project.json"
-          }
+        "sequena": {
+          "$path": "default.project.json"
         }
       }
     }

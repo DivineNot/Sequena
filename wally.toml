@@ -6,5 +6,3 @@ realm = "shared"
 license = "MIT"
 
 [dev-dependencies]
-jest = "jsdotlua/jest@3.10.0"
-jest-globals = "jsdotlua/jest-globals@3.10.0"

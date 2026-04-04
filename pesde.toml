@@ -4,10 +4,17 @@ description = "A Roblox Networking Module."
 authors = ["DivineNot"]
 repository = "https://github.com/DivineNot/Sequena"
 license = "MIT"
+includes = [
+    "pesde.toml",
+    "wally.toml",
+    "README.md",
+    "src/**/*.luau"
+]
 
 [target]
 environment = "roblox"
-
+lib = "src/init.luau"
+build_files = ["src"]
 [indices]
 default = "https://github.com/pesde-pkg/index"
 
