@@ -1,28 +1,83 @@
---!native
+--!strict
 --!optimize 2
 
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
-local Config = require(script:FindFirstChild("Config"))
-local LZAV = assert(script:FindFirstChild("LZAV"), "LZAV module not found")
-LZAV = require(LZAV)
+local Config = require(script:FindFirstChild("Config")) :: any
+local LZAV = require(script:FindFirstChild("LZAV")) :: any
+
+local BufferCreate = buffer.create
+local BufferCopy = buffer.copy
+local BufferLen = buffer.len
+local BufferReadU8 = buffer.readu8
+local BufferWriteU8 = buffer.writeu8
+local BufferReadU16 = buffer.readu16
+local BufferWriteU16 = buffer.writeu16
+local BufferReadU32 = buffer.readu32
+local BufferWriteU32 = buffer.writeu32
+local BufferReadI8 = buffer.readi8
+local BufferWriteI8 = buffer.writei8
+local BufferReadI16 = buffer.readi16
+local BufferWriteI16 = buffer.writei16
+local BufferReadI32 = buffer.readi32
+local BufferWriteI32 = buffer.writei32
+local BufferReadF32 = buffer.readf32
+local BufferWriteF32 = buffer.writef32
+local BufferReadF64 = buffer.readf64
+local BufferWriteF64 = buffer.writef64
+local BufferReadString = buffer.readstring
+local BufferWriteString = buffer.writestring
+local MathFloor = math.floor
+local MathSqrt = math.sqrt
+local MathAbs = math.abs
+local TaskSpawn = task.spawn
+local TaskCancel = task.cancel
+
+type ReadFunc = () -> any
+type WriteFunc = (any) -> ()
+type SchemaItem = string | { Read: ReadFunc, Write: WriteFunc }
 
 type Connection = { Connected: boolean, Disconnect: (self: Connection) -> () }
 type Signal<T...> = {
-	Connect: (self: Signal<T...>, callback: (T...) -> ()) -> Connection,
-	Once: (self: Signal<T...>, callback: (T...) -> ()) -> Connection,
+	Connect: (self: Signal<T...>, Callback: (T...) -> ()) -> Connection,
+	Once: (self: Signal<T...>, Callback: (T...) -> ()) -> Connection,
 	Fire: (self: Signal<T...>, T...) -> (),
 	Wait: (self: Signal<T...>) -> T...,
 }
 
 local function CreateSignal<T...>(): Signal<T...>
-	local Bindable = Instance.new("BindableEvent")
-	local Self = {}
-	function Self:Connect(Callback) return Bindable.Event:Connect(Callback) end
-	function Self:Once(Callback) return Bindable.Event:Once(Callback) end
-	function Self:Fire(...) Bindable:Fire(...) end
-	function Self:Wait() return Bindable.Event:Wait() end
-	return Self :: any
+	local Callbacks: {(T...) -> ()} = {}
+	local WaitingThreads: {thread} = {}
+	local Self = {} :: any
+	function Self:Connect(Callback: (T...) -> ()): Connection
+		local Index = #Callbacks + 1
+		Callbacks[Index] = Callback
+		local Conn = { Connected = true, Disconnect = function(S: any) S.Connected = false; Callbacks[Index] = nil end }
+		return Conn
+	end
+	function Self:Once(Callback: (T...) -> ()): Connection
+		local Conn: Connection
+		Conn = Self:Connect(function(...: any)
+			Conn:Disconnect()
+			Callback(...)
+		end)
+		return Conn
+	end
+	function Self:Fire(...: any)
+		for _, Fn in Callbacks do
+			TaskSpawn(Fn, ...)
+		end
+		for _, Thread in WaitingThreads do
+			TaskSpawn(Thread, ...)
+		end
+		table.clear(WaitingThreads)
+	end
+	function Self:Wait(): T...
+		local Thread = coroutine.running()
+		WaitingThreads[#WaitingThreads + 1] = Thread
+		return coroutine.yield()
+	end
+	return Self
 end
 
 export type Cursor = {
@@ -63,78 +118,78 @@ local function Allocate(Bytes: number)
 		end
 		while BufferLength < Target do BufferLength *= 2 end
 		if BufferLength > MAX_BUFFER_SIZE then BufferLength = MAX_BUFFER_SIZE end
-		local New = buffer.create(BufferLength)
-		buffer.copy(New, 0, ActiveBuffer, 0, BufferOffset)
+		local New = BufferCreate(BufferLength)
+		BufferCopy(New, 0, ActiveBuffer, 0, BufferOffset)
 		ActiveCursor.Buffer = New
 		ActiveBuffer = New
 	end
 end
 
-local function ReadU8()
+local function ReadU8(): number
 	if BufferOffset + 1 > BufferLength then error("Buffer underflow") end
-	local V = buffer.readu8(ActiveBuffer, BufferOffset)
+	local V = BufferReadU8(ActiveBuffer, BufferOffset)
 	BufferOffset += 1
 	return V
 end
 
-local function WriteU8(V: number) buffer.writeu8(ActiveBuffer, BufferOffset, V) BufferOffset += 1 end
-local function ReadU16()
+local function WriteU8(V: number) BufferWriteU8(ActiveBuffer, BufferOffset, V); BufferOffset += 1 end
+local function ReadU16(): number
 	if BufferOffset + 2 > BufferLength then error("Buffer underflow") end
-	local V = buffer.readu16(ActiveBuffer, BufferOffset)
+	local V = BufferReadU16(ActiveBuffer, BufferOffset)
 	BufferOffset += 2
 	return V
 end
-local function WriteU16(V: number) buffer.writeu16(ActiveBuffer, BufferOffset, V) BufferOffset += 2 end
-local function ReadU32()
+local function WriteU16(V: number) BufferWriteU16(ActiveBuffer, BufferOffset, V); BufferOffset += 2 end
+local function ReadU32(): number
 	if BufferOffset + 4 > BufferLength then error("Buffer underflow") end
-	local V = buffer.readu32(ActiveBuffer, BufferOffset)
+	local V = BufferReadU32(ActiveBuffer, BufferOffset)
 	BufferOffset += 4
 	return V
 end
-local function WriteU32(V: number) buffer.writeu32(ActiveBuffer, BufferOffset, V) BufferOffset += 4 end
-local function ReadI8()
+local function WriteU32(V: number) BufferWriteU32(ActiveBuffer, BufferOffset, V); BufferOffset += 4 end
+local function ReadI8(): number
 	if BufferOffset + 1 > BufferLength then error("Buffer underflow") end
-	local V = buffer.readi8(ActiveBuffer, BufferOffset)
+	local V = BufferReadI8(ActiveBuffer, BufferOffset)
 	BufferOffset += 1
 	return V
 end
-local function WriteI8(V: number) buffer.writei8(ActiveBuffer, BufferOffset, V) BufferOffset += 1 end
-local function ReadI16()
+local function WriteI8(V: number) BufferWriteI8(ActiveBuffer, BufferOffset, V); BufferOffset += 1 end
+local function ReadI16(): number
 	if BufferOffset + 2 > BufferLength then error("Buffer underflow") end
-	local V = buffer.readi16(ActiveBuffer, BufferOffset)
+	local V = BufferReadI16(ActiveBuffer, BufferOffset)
 	BufferOffset += 2
 	return V
 end
-local function WriteI16(V: number) buffer.writei16(ActiveBuffer, BufferOffset, V) BufferOffset += 2 end
-local function ReadI32()
+local function WriteI16(V: number) BufferWriteI16(ActiveBuffer, BufferOffset, V); BufferOffset += 2 end
+local function ReadI32(): number
 	if BufferOffset + 4 > BufferLength then error("Buffer underflow") end
-	local V = buffer.readi32(ActiveBuffer, BufferOffset)
+	local V = BufferReadI32(ActiveBuffer, BufferOffset)
 	BufferOffset += 4
 	return V
 end
-local function WriteI32(V: number) buffer.writei32(ActiveBuffer, BufferOffset, V) BufferOffset += 4 end
-local function ReadF32()
+local function WriteI32(V: number) BufferWriteI32(ActiveBuffer, BufferOffset, V); BufferOffset += 4 end
+local function ReadF32(): number
 	if BufferOffset + 4 > BufferLength then error("Buffer underflow") end
-	local V = buffer.readf32(ActiveBuffer, BufferOffset)
+	local V = BufferReadF32(ActiveBuffer, BufferOffset)
 	BufferOffset += 4
 	return V
 end
-local function WriteF32(V: number) buffer.writef32(ActiveBuffer, BufferOffset, V) BufferOffset += 4 end
-local function ReadF64()
+local function WriteF32(V: number) BufferWriteF32(ActiveBuffer, BufferOffset, V); BufferOffset += 4 end
+local function ReadF64(): number
 	if BufferOffset + 8 > BufferLength then error("Buffer underflow") end
-	local V = buffer.readf64(ActiveBuffer, BufferOffset)
+	local V = BufferReadF64(ActiveBuffer, BufferOffset)
 	BufferOffset += 8
 	return V
 end
-local function WriteF64(V: number) buffer.writef64(ActiveBuffer, BufferOffset, V) BufferOffset += 8 end
-local function ReadString(Len: number)
+local function WriteF64(V: number) BufferWriteF64(ActiveBuffer, BufferOffset, V); BufferOffset += 8 end
+local function ReadString(Len: number): string
 	if BufferOffset + Len > BufferLength then error("Buffer underflow") end
-	local V = buffer.readstring(ActiveBuffer, BufferOffset, Len)
+	local V = BufferReadString(ActiveBuffer, BufferOffset, Len)
 	BufferOffset += Len
 	return V
 end
-local function WriteString(V: string) buffer.writestring(ActiveBuffer, BufferOffset, V) BufferOffset += #V end
-local function ReadInstance()
+local function WriteString(V: string) BufferWriteString(ActiveBuffer, BufferOffset, V); BufferOffset += #V end
+local function ReadInstance(): Instance
 	InstancesOffset += 1
 	return Instances[InstancesOffset]
 end
@@ -143,52 +198,106 @@ local function WriteInstance(V: Instance)
 	Instances[InstancesOffset] = V
 end
 
-local TYPE_NIL = 0
-local TYPE_BOOL = 1
-local TYPE_NUMBER = 2
-local TYPE_STRING = 3
-local TYPE_BUFFER = 4
-local TYPE_VECTOR2 = 5
-local TYPE_VECTOR3 = 6
-local TYPE_CFRAME = 7
-local TYPE_COLOR3 = 8
-local TYPE_INSTANCE = 12
-local TYPE_ENUM = 13
-local TYPE_TABLE = 16
-local TYPE_INT_U8 = 17
-local TYPE_INT_U16 = 18
-local TYPE_INT_U32 = 19
-local TYPE_INT_I16 = 20
-local TYPE_INT_I32 = 21
+local function ReadF16(): number
+	if BufferOffset + 2 > BufferLength then error("Buffer underflow") end
+	local Raw = BufferReadU16(ActiveBuffer, BufferOffset)
+	BufferOffset += 2
+	local Sign = if bit32.btest(Raw, 0x8000) then -1 else 1
+	local Exponent = bit32.band(bit32.rshift(Raw, 10), 0x1F)
+	local Mantissa = bit32.band(Raw, 0x3FF)
+	if Exponent == 0 then
+		return Sign * (Mantissa / 1024) * (2 ^ -14)
+	elseif Exponent == 31 then
+		return if Mantissa == 0 then Sign * math.huge else 0/0
+	end
+	return Sign * (1 + Mantissa / 1024) * (2 ^ (Exponent - 15))
+end
 
-local EnumCache = {} :: {[EnumItem]: string}
-local StringToEnumCache = {} :: {[string]: EnumItem}
+local function WriteF16(V: number)
+	local Sign = 0
+	if V < 0 then Sign = 0x8000; V = -V end
+	if V == math.huge then
+		BufferWriteU16(ActiveBuffer, BufferOffset, bit32.bor(Sign, 0x7C00))
+		BufferOffset += 2
+		return
+	end
+	if V ~= V then
+		BufferWriteU16(ActiveBuffer, BufferOffset, bit32.bor(Sign, 0x7E00))
+		BufferOffset += 2
+		return
+	end
+	if V == 0 then
+		BufferWriteU16(ActiveBuffer, BufferOffset, Sign)
+		BufferOffset += 2
+		return
+	end
+	local M, E = math.frexp(V)
+	E = E + 14
+	if E <= 0 then
+		local Mantissa = MathFloor(M * (2 ^ (E + 9)) + 0.5)
+		BufferWriteU16(ActiveBuffer, BufferOffset, bit32.bor(Sign, bit32.band(Mantissa, 0x3FF)))
+	elseif E >= 31 then
+		BufferWriteU16(ActiveBuffer, BufferOffset, bit32.bor(Sign, 0x7C00))
+	else
+		local Mantissa = MathFloor((M * 2 - 1) * 1024 + 0.5)
+		BufferWriteU16(ActiveBuffer, BufferOffset, bit32.bor(Sign, bit32.lshift(E, 10), bit32.band(Mantissa, 0x3FF)))
+	end
+	BufferOffset += 2
+end
+
+local TYPE_NIL = 0
+local TYPE_BOOL_TRUE = 1
+local TYPE_BOOL_FALSE = 2
+local TYPE_NUMBER = 3
+local TYPE_STRING = 4
+local TYPE_BUFFER = 5
+local TYPE_VECTOR2 = 6
+local TYPE_VECTOR3 = 7
+local TYPE_CFRAME = 8
+local TYPE_COLOR3 = 9
+local TYPE_INSTANCE = 10
+local TYPE_ENUM = 11
+local TYPE_TABLE = 12
+local TYPE_INT_U8 = 13
+local TYPE_INT_U16 = 14
+local TYPE_INT_U32 = 15
+local TYPE_INT_I16 = 16
+local TYPE_INT_I32 = 17
+local TYPE_ZERO = 18
+local TYPE_ONE = 19
+local TYPE_NEGATED_INT_U8 = 20
+local TYPE_ZERO_VECTOR3 = 21
+local TYPE_IDENTITY_CFRAME = 22
+local TYPE_EMPTY_STRING = 23
+
+local EnumCache: {[EnumItem]: string} = {}
+local StringToEnumCache: {[string]: EnumItem} = {}
 
 TypeReads.U8 = ReadU8
-TypeWrites.U8 = function(V) Allocate(1) WriteU8(V) end
+TypeWrites.U8 = function(V) Allocate(1); WriteU8(V) end
 TypeReads.U16 = ReadU16
-TypeWrites.U16 = function(V) Allocate(2) WriteU16(V) end
+TypeWrites.U16 = function(V) Allocate(2); WriteU16(V) end
 TypeReads.U32 = ReadU32
-TypeWrites.U32 = function(V) Allocate(4) WriteU32(V) end
+TypeWrites.U32 = function(V) Allocate(4); WriteU32(V) end
 TypeReads.I8 = ReadI8
-TypeWrites.I8 = function(V) Allocate(1) WriteI8(V) end
+TypeWrites.I8 = function(V) Allocate(1); WriteI8(V) end
 TypeReads.I16 = ReadI16
-TypeWrites.I16 = function(V) Allocate(2) WriteI16(V) end
+TypeWrites.I16 = function(V) Allocate(2); WriteI16(V) end
 TypeReads.I32 = ReadI32
-TypeWrites.I32 = function(V) Allocate(4) WriteI32(V) end
+TypeWrites.I32 = function(V) Allocate(4); WriteI32(V) end
 TypeReads.F32 = ReadF32
-TypeWrites.F32 = function(V) Allocate(4) WriteF32(V) end
+TypeWrites.F32 = function(V) Allocate(4); WriteF32(V) end
 TypeReads.F64 = ReadF64
-TypeWrites.F64 = function(V) Allocate(8) WriteF64(V) end
+TypeWrites.F64 = function(V) Allocate(8); WriteF64(V) end
 TypeReads.Bool = function() return ReadU8() == 1 end
-TypeWrites.Bool = function(V) Allocate(1) WriteU8(if V then 1 else 0) end
+TypeWrites.Bool = function(V) Allocate(1); WriteU8(if V then 1 else 0) end
 
 local function ReadVarInt(): number
 	local C = 0
 	local V = 0
 	local B
 	repeat
-		B = buffer.readu8(ActiveBuffer, BufferOffset)
+		B = BufferReadU8(ActiveBuffer, BufferOffset)
 		BufferOffset += 1
 		V = bit32.bor(V, bit32.lshift(bit32.band(B, 0x7F), C))
 		C += 7
@@ -198,11 +307,11 @@ end
 
 local function WriteVarInt(V: number)
 	while V >= 128 do
-		buffer.writeu8(ActiveBuffer, BufferOffset, bit32.bor(V, 0x80))
+		BufferWriteU8(ActiveBuffer, BufferOffset, bit32.bor(V, 0x80))
 		BufferOffset += 1
 		V = bit32.rshift(V, 7)
 	end
-	buffer.writeu8(ActiveBuffer, BufferOffset, V)
+	BufferWriteU8(ActiveBuffer, BufferOffset, V)
 	BufferOffset += 1
 end
 
@@ -221,67 +330,168 @@ end
 TypeReads.Buffer = function()
 	local Len = ReadVarInt()
 	if Len > MAX_BUFFER_SIZE then error(`Buffer too large: {Len}`) end
-	local B = buffer.create(Len)
-	buffer.copy(B, 0, ActiveBuffer, BufferOffset, Len)
+	local B = BufferCreate(Len)
+	BufferCopy(B, 0, ActiveBuffer, BufferOffset, Len)
 	BufferOffset += Len
 	return B
 end
 TypeWrites.Buffer = function(V: buffer)
-	local Len = buffer.len(V)
+	local Len = BufferLen(V)
 	Allocate(5 + Len)
 	WriteVarInt(Len)
-	buffer.copy(ActiveBuffer, BufferOffset, V, 0, Len)
+	BufferCopy(ActiveBuffer, BufferOffset, V, 0, Len)
 	BufferOffset += Len
 end
 
 TypeReads.Vector3 = function() return Vector3.new(ReadF32(), ReadF32(), ReadF32()) end
-TypeWrites.Vector3 = function(V: Vector3) Allocate(12) WriteF32(V.X) WriteF32(V.Y) WriteF32(V.Z) end
+TypeWrites.Vector3 = function(V: Vector3) Allocate(12); WriteF32(V.X); WriteF32(V.Y); WriteF32(V.Z) end
 TypeReads.Vector2 = function() return Vector2.new(ReadF32(), ReadF32()) end
-TypeWrites.Vector2 = function(V: Vector2) Allocate(8) WriteF32(V.X) WriteF32(V.Y) end
+TypeWrites.Vector2 = function(V: Vector2) Allocate(8); WriteF32(V.X); WriteF32(V.Y) end
+TypeReads.Vector3I16 = function() return Vector3.new(ReadI16(), ReadI16(), ReadI16()) end
+TypeWrites.Vector3I16 = function(V: Vector3) Allocate(6); WriteI16(V.X); WriteI16(V.Y); WriteI16(V.Z) end
 
-TypeReads.CFrame = function()
-	local Px, Py, Pz = ReadF32(), ReadF32(), ReadF32()
-	local Qw, Qx, Qy, Qz = ReadF32(), ReadF32(), ReadF32(), ReadF32()
+local function MatrixToQuat(R00: number, R01: number, R02: number, R10: number, R11: number, R12: number, R20: number, R21: number, R22: number): (number, number, number, number)
+	local Trace = R00 + R11 + R22
+	if Trace > 0 then
+		local S = MathSqrt(Trace + 1) * 2
+		return 0.25 * S, (R21 - R12) / S, (R02 - R20) / S, (R10 - R01) / S
+	elseif R00 > R11 and R00 > R22 then
+		local S = MathSqrt(1 + R00 - R11 - R22) * 2
+		return (R21 - R12) / S, 0.25 * S, (R01 + R10) / S, (R02 + R20) / S
+	elseif R11 > R22 then
+		local S = MathSqrt(1 + R11 - R00 - R22) * 2
+		return (R02 - R20) / S, (R01 + R10) / S, 0.25 * S, (R12 + R21) / S
+	else
+		local S = MathSqrt(1 + R22 - R00 - R11) * 2
+		return (R10 - R01) / S, (R02 + R20) / S, (R12 + R21) / S, 0.25 * S
+	end
+end
+
+local function QuatToMatrix(Qw: number, Qx: number, Qy: number, Qz: number): (number, number, number, number, number, number, number, number, number)
 	local Xx, Yy, Zz = Qx * Qx, Qy * Qy, Qz * Qz
 	local Xy, Xz, Yz = Qx * Qy, Qx * Qz, Qy * Qz
 	local Wx, Wy, Wz = Qw * Qx, Qw * Qy, Qw * Qz
-	return CFrame.new(Px, Py, Pz,
-		1 - 2 * (Yy + Zz), 2 * (Xy - Wz), 2 * (Xz + Wy),
-		2 * (Xy + Wz), 1 - 2 * (Xx + Zz), 2 * (Yz - Wx),
-		2 * (Xz - Wy), 2 * (Yz + Wx), 1 - 2 * (Xx + Yy))
+
+	local m11 = 1 - 2 * (Yy + Zz)
+	local m12 = 2 * (Xy - Wz)
+	local m13 = 2 * (Xz + Wy)
+
+	local m21 = 2 * (Xy + Wz)
+	local m22 = 1 - 2 * (Xx + Zz)
+	local m23 = 2 * (Yz - Wx)
+
+	local m31 = 2 * (Xz - Wy)
+	local m32 = 2 * (Yz + Wx)
+	local m33 = 1 - 2 * (Xx + Yy)
+
+	return m11, m12, m13, m21, m22, m23, m31, m32, m33
+end
+
+TypeReads.CFrame = function()
+	local Px, Py, Pz = ReadF32(), ReadF32(), ReadF32()
+	local Header = ReadU8()
+	local LargestIdx = bit32.band(Header, 3)
+	local SignBit = bit32.btest(Header, 4)
+	local A, B, C = ReadF32(), ReadF32(), ReadF32()
+	local SumSq = A * A + B * B + C * C
+	local Largest = MathSqrt(if SumSq < 1 then 1 - SumSq else 0)
+	if SignBit then Largest = -Largest end
+	local Qw, Qx, Qy, Qz
+	if LargestIdx == 0 then Qw, Qx, Qy, Qz = Largest, A, B, C
+	elseif LargestIdx == 1 then Qw, Qx, Qy, Qz = A, Largest, B, C
+	elseif LargestIdx == 2 then Qw, Qx, Qy, Qz = A, B, Largest, C
+	else Qw, Qx, Qy, Qz = A, B, C, Largest end
+	local R00, R01, R02, R10, R11, R12, R20, R21, R22 = QuatToMatrix(Qw, Qx, Qy, Qz)
+	return CFrame.new(Px, Py, Pz, R00, R01, R02, R10, R11, R12, R20, R21, R22)
 end
 TypeWrites.CFrame = function(V: CFrame)
-	Allocate(28)
+	Allocate(25)
 	local X, Y, Z, R00, R01, R02, R10, R11, R12, R20, R21, R22 = V:GetComponents()
-	local Trace = R00 + R11 + R22
-	local Qw, Qx, Qy, Qz
-	if Trace > 0 then
-		local S = math.sqrt(Trace + 1) * 2
-		Qw, Qx, Qy, Qz = 0.25 * S, (R21 - R12) / S, (R02 - R20) / S, (R10 - R01) / S
+	WriteF32(X); WriteF32(Y); WriteF32(Z)
+	local Qw, Qx, Qy, Qz = MatrixToQuat(R00, R01, R02, R10, R11, R12, R20, R21, R22)
+	local Aw, Ax, Ay, Az = MathAbs(Qw), MathAbs(Qx), MathAbs(Qy), MathAbs(Qz)
+	local LargestIdx = 0
+	local LargestVal = Aw
+	if Ax > LargestVal then LargestIdx = 1; LargestVal = Ax end
+	if Ay > LargestVal then LargestIdx = 2; LargestVal = Ay end
+	if Az > LargestVal then LargestIdx = 3 end
+	local SignBit = 0
+	local A, B, C
+	if LargestIdx == 0 then
+		if Qw < 0 then SignBit = 4 end
+		A, B, C = Qx, Qy, Qz
+	elseif LargestIdx == 1 then
+		if Qx < 0 then SignBit = 4 end
+		A, B, C = Qw, Qy, Qz
+	elseif LargestIdx == 2 then
+		if Qy < 0 then SignBit = 4 end
+		A, B, C = Qw, Qx, Qz
 	else
-		if R00 > R11 and R00 > R22 then
-			local S = math.sqrt(1 + R00 - R11 - R22) * 2
-			Qw, Qx, Qy, Qz = (R21 - R12) / S, 0.25 * S, (R01 + R10) / S, (R02 + R20) / S
-		elseif R11 > R22 then
-			local S = math.sqrt(1 + R11 - R00 - R22) * 2
-			Qw, Qx, Qy, Qz = (R02 - R20) / S, (R01 + R10) / S, 0.25 * S, (R12 + R21) / S
-		else
-			local S = math.sqrt(1 + R22 - R00 - R11) * 2
-			Qw, Qx, Qy, Qz = (R10 - R01) / S, (R02 + R20) / S, (R12 + R21) / S, 0.25 * S
-		end
+		if Qz < 0 then SignBit = 4 end
+		A, B, C = Qw, Qx, Qy
 	end
-	WriteF32(X) WriteF32(Y) WriteF32(Z)
-	WriteF32(Qw) WriteF32(Qx) WriteF32(Qy) WriteF32(Qz)
+	WriteU8(bit32.bor(LargestIdx, SignBit))
+	WriteF32(A); WriteF32(B); WriteF32(C)
 end
+
+TypeReads.CFrameCompact = function()
+	local Px, Py, Pz = ReadF32(), ReadF32(), ReadF32()
+	local Header = ReadU8()
+	local LargestIdx = bit32.band(Header, 3)
+	local SignBit = bit32.btest(Header, 4)
+	local A, B, C = ReadF16(), ReadF16(), ReadF16()
+	local SumSq = A * A + B * B + C * C
+	local Largest = MathSqrt(if SumSq < 1 then 1 - SumSq else 0)
+	if SignBit then Largest = -Largest end
+	local Qw, Qx, Qy, Qz
+	if LargestIdx == 0 then Qw, Qx, Qy, Qz = Largest, A, B, C
+	elseif LargestIdx == 1 then Qw, Qx, Qy, Qz = A, Largest, B, C
+	elseif LargestIdx == 2 then Qw, Qx, Qy, Qz = A, B, Largest, C
+	else Qw, Qx, Qy, Qz = A, B, C, Largest end
+	local R00, R01, R02, R10, R11, R12, R20, R21, R22 = QuatToMatrix(Qw, Qx, Qy, Qz)
+	return CFrame.new(Px, Py, Pz, R00, R01, R02, R10, R11, R12, R20, R21, R22)
+end
+TypeWrites.CFrameCompact = function(V: CFrame)
+	Allocate(19)
+	local X, Y, Z, R00, R01, R02, R10, R11, R12, R20, R21, R22 = V:GetComponents()
+	WriteF32(X); WriteF32(Y); WriteF32(Z)
+	local Qw, Qx, Qy, Qz = MatrixToQuat(R00, R01, R02, R10, R11, R12, R20, R21, R22)
+	local Aw, Ax, Ay, Az = MathAbs(Qw), MathAbs(Qx), MathAbs(Qy), MathAbs(Qz)
+	local LargestIdx = 0
+	local LargestVal = Aw
+	if Ax > LargestVal then LargestIdx = 1; LargestVal = Ax end
+	if Ay > LargestVal then LargestIdx = 2; LargestVal = Ay end
+	if Az > LargestVal then LargestIdx = 3 end
+	local SignBit = 0
+	local A, B, C
+	if LargestIdx == 0 then
+		if Qw < 0 then SignBit = 4 end
+		A, B, C = Qx, Qy, Qz
+	elseif LargestIdx == 1 then
+		if Qx < 0 then SignBit = 4 end
+		A, B, C = Qw, Qy, Qz
+	elseif LargestIdx == 2 then
+		if Qy < 0 then SignBit = 4 end
+		A, B, C = Qw, Qx, Qz
+	else
+		if Qz < 0 then SignBit = 4 end
+		A, B, C = Qw, Qx, Qy
+	end
+	WriteU8(bit32.bor(LargestIdx, SignBit))
+	WriteF16(A); WriteF16(B); WriteF16(C)
+end
+
+TypeReads.F16 = ReadF16
+TypeWrites.F16 = function(V: number) Allocate(2); WriteF16(V) end
 
 TypeReads.Color3 = function()
 	return Color3.fromRGB(ReadU8(), ReadU8(), ReadU8())
 end
 TypeWrites.Color3 = function(V: Color3)
 	Allocate(3)
-	WriteU8(math.floor(V.R * 255))
-	WriteU8(math.floor(V.G * 255))
-	WriteU8(math.floor(V.B * 255))
+	WriteU8(MathFloor(V.R * 255))
+	WriteU8(MathFloor(V.G * 255))
+	WriteU8(MathFloor(V.B * 255))
 end
 
 TypeReads.Instance = ReadInstance
@@ -365,7 +575,7 @@ Types.Optional = function(InnerType: string)
 	}
 end
 Types.Enum = function(Values: {string})
-	local ValueToIndex = {}
+	local ValueToIndex: {[string]: number} = {}
 	for I, V in Values do
 		ValueToIndex[V] = I - 1
 	end
@@ -373,11 +583,157 @@ Types.Enum = function(Values: {string})
 		Read = function()
 			return Values[ReadU8() + 1]
 		end,
-		Write = function(V)
+		Write = function(V: any)
 			local Idx = ValueToIndex[V]
 			if not Idx then error(`Invalid enum value: {V}`) end
-			Allocate(1)
-			WriteU8(Idx)
+			Allocate(1); WriteU8(Idx)
+		end
+	}
+end
+Types.Map = function(KeyType: string, ValueType: string, MaxSize: number?)
+	local KeyRead = TypeReads[KeyType]
+	local KeyWrite = TypeWrites[KeyType]
+	local ValRead = TypeReads[ValueType]
+	local ValWrite = TypeWrites[ValueType]
+	local Max = MaxSize or MAX_ARRAY_SIZE
+	return {
+		Read = function()
+			local Len = ReadU16()
+			if Len > Max then error(`Map exceeds max size: {Len} > {Max}`) end
+			local M = {}
+			for _ = 1, Len do
+				local K = KeyRead()
+				M[K] = ValRead()
+			end
+			return M
+		end,
+		Write = function(V: any)
+			local Count = 0
+			for _ in V do Count += 1 end
+			Count = if Count > Max then Max else Count
+			Allocate(2); WriteU16(Count)
+			local Written = 0
+			for K, Val in V do
+				if Written >= Count then break end
+				KeyWrite(K); ValWrite(Val)
+				Written += 1
+			end
+		end
+	}
+end
+Types.Struct = function(Fields: {{any}})
+	local N = #Fields
+	local FieldReads = table.create(N)
+	local FieldWrites = table.create(N)
+	local FieldNames = table.create(N)
+	for I = 1, N do
+		local Def = Fields[I]
+		local FName = Def[1]
+		local FType = Def[2]
+		FieldNames[I] = FName
+		if type(FType) == "string" then
+			FieldReads[I] = TypeReads[FType]
+			FieldWrites[I] = TypeWrites[FType]
+		elseif type(FType) == "table" and FType.Read and FType.Write then
+			FieldReads[I] = FType.Read
+			FieldWrites[I] = FType.Write
+		else
+			error(`Invalid struct field type for "{FName}"`)
+		end
+	end
+	return {
+		Read = function()
+			local S: {[string]: any} = {}
+			for I = 1, N do
+				S[FieldNames[I] :: string] = (FieldReads[I] :: ReadFunc)()
+			end
+			return S
+		end,
+		Write = function(V: any)
+			for I = 1, N do
+				(FieldWrites[I] :: WriteFunc)(V[FieldNames[I] :: string])
+			end
+		end
+	}
+end
+Types.RangedU8 = function(Min: number, Max: number)
+	return {
+		Read = function()
+			local V = ReadU8()
+			return V + Min
+		end,
+		Write = function(V: any)
+			local Clamped = if V < Min then Min elseif V > Max then Max else V
+			Allocate(1); WriteU8(Clamped - Min)
+		end
+	}
+end
+Types.RangedU16 = function(Min: number, Max: number)
+	return {
+		Read = function()
+			local V = ReadU16()
+			return V + Min
+		end,
+		Write = function(V: any)
+			local Clamped = if V < Min then Min elseif V > Max then Max else V
+			Allocate(2); WriteU16(Clamped - Min)
+		end
+	}
+end
+Types.Bitfield = function(Fields: {{any}})
+	local TotalBits = 0
+	for _, F in Fields do
+		TotalBits += F[2]
+	end
+	local ByteCount = MathFloor((TotalBits + 7) / 8)
+	return {
+		Read = function()
+			local Bytes = table.create(ByteCount)
+			for I = 1, ByteCount do
+				Bytes[I] = ReadU8()
+			end
+			local Result: {[string]: any} = {}
+			local BitPos = 0
+			for _, F in Fields do
+				local FName = F[1]
+				local FBits = F[2]
+				local ByteIdx = MathFloor(BitPos / 8) + 1
+				local BitIdx = BitPos % 8
+				local Val = bit32.extract(Bytes[ByteIdx] :: number, BitIdx, math.min(FBits, 8 - BitIdx))
+				if FBits > (8 - BitIdx) and ByteIdx < ByteCount then
+					local Remaining = FBits - (8 - BitIdx)
+					Val = bit32.bor(Val, bit32.lshift(bit32.extract(Bytes[ByteIdx + 1] :: number, 0, Remaining), 8 - BitIdx))
+				end
+				if FBits == 1 then
+					Result[FName] = Val == 1
+				else
+					Result[FName] = Val
+				end
+				BitPos += FBits
+			end
+			return Result
+		end,
+		Write = function(V: any)
+			Allocate(ByteCount)
+			local Bytes = table.create(ByteCount, 0)
+			local BitPos = 0
+			for _, F in Fields do
+				local FName = F[1]
+				local FBits = F[2]
+				local Val = V[FName]
+				if type(Val) == "boolean" then Val = if Val then 1 else 0 end
+				local ByteIdx = MathFloor(BitPos / 8) + 1
+				local BitIdx = BitPos % 8
+				Bytes[ByteIdx] = bit32.replace(Bytes[ByteIdx], bit32.band(Val, bit32.lshift(1, math.min(FBits, 8 - BitIdx)) - 1), BitIdx, math.min(FBits, 8 - BitIdx))
+				if FBits > (8 - BitIdx) and ByteIdx < ByteCount then
+					local Remaining = FBits - (8 - BitIdx)
+					Bytes[ByteIdx + 1] = bit32.replace(Bytes[ByteIdx + 1], bit32.rshift(Val, 8 - BitIdx), 0, Remaining)
+				end
+				BitPos += FBits
+			end
+			for I = 1, ByteCount do
+				WriteU8(Bytes[I])
+			end
 		end
 	}
 end
@@ -385,128 +741,114 @@ end
 local function WriteAny(V: any)
 	local T = typeof(V)
 	if T == "nil" then
-		Allocate(1)
-		WriteU8(TYPE_NIL)
+		Allocate(1); WriteU8(TYPE_NIL)
 	elseif T == "boolean" then
-		Allocate(2)
-		WriteU8(TYPE_BOOL)
-		WriteU8(if V then 1 else 0)
+		Allocate(1); WriteU8(if V then TYPE_BOOL_TRUE else TYPE_BOOL_FALSE)
 	elseif T == "number" then
-		if V % 1 == 0 then
+		if V == 0 then
+			Allocate(1); WriteU8(TYPE_ZERO)
+		elseif V == 1 then
+			Allocate(1); WriteU8(TYPE_ONE)
+		elseif V % 1 == 0 then
 			if V >= 0 then
 				if V <= 255 then
-					Allocate(2)
-					WriteU8(TYPE_INT_U8)
-					WriteU8(V)
+					Allocate(2); WriteU8(TYPE_INT_U8); WriteU8(V)
 				elseif V <= 65535 then
-					Allocate(3)
-					WriteU8(TYPE_INT_U16)
-					WriteU16(V)
+					Allocate(3); WriteU8(TYPE_INT_U16); WriteU16(V)
 				elseif V <= 4294967295 then
-					Allocate(5)
-					WriteU8(TYPE_INT_U32)
-					WriteU32(V)
+					Allocate(5); WriteU8(TYPE_INT_U32); WriteU32(V)
 				else
-					Allocate(9)
-					WriteU8(TYPE_NUMBER)
-					WriteF64(V)
+					Allocate(9); WriteU8(TYPE_NUMBER); WriteF64(V)
 				end
 			else
-				if V >= -32768 and V <= 32767 then
-					Allocate(3)
-					WriteU8(TYPE_INT_I16)
-					WriteI16(V)
+				if V >= -128 then
+					Allocate(2); WriteU8(TYPE_NEGATED_INT_U8); WriteU8(-V)
+				elseif V >= -32768 and V <= 32767 then
+					Allocate(3); WriteU8(TYPE_INT_I16); WriteI16(V)
 				elseif V >= -2147483648 and V <= 2147483647 then
-					Allocate(5)
-					WriteU8(TYPE_INT_I32)
-					WriteI32(V)
+					Allocate(5); WriteU8(TYPE_INT_I32); WriteI32(V)
 				else
-					Allocate(9)
-					WriteU8(TYPE_NUMBER)
-					WriteF64(V)
+					Allocate(9); WriteU8(TYPE_NUMBER); WriteF64(V)
 				end
 			end
 		else
-			Allocate(9)
-			WriteU8(TYPE_NUMBER)
-			WriteF64(V)
+			Allocate(9); WriteU8(TYPE_NUMBER); WriteF64(V)
 		end
 	elseif T == "string" then
-		Allocate(1)
-		WriteU8(TYPE_STRING)
-		TypeWrites.String(V)
-	elseif T == "buffer" then
-		Allocate(1)
-		WriteU8(TYPE_BUFFER)
-		TypeWrites.Buffer(V)
-	elseif T == "Vector2" then
-		Allocate(9)
-		WriteU8(TYPE_VECTOR2)
-		TypeWrites.Vector2(V)
-	elseif T == "Vector3" then
-		Allocate(13)
-		WriteU8(TYPE_VECTOR3)
-		TypeWrites.Vector3(V)
-	elseif T == "CFrame" then
-		Allocate(29)
-		WriteU8(TYPE_CFRAME)
-		TypeWrites.CFrame(V)
-	elseif T == "Color3" then
-		Allocate(4)
-		WriteU8(TYPE_COLOR3)
-		TypeWrites.Color3(V)
-	elseif T == "Instance" then
-		Allocate(1)
-		WriteU8(TYPE_INSTANCE)
-		WriteInstance(V)
-	elseif T == "EnumItem" then
-		Allocate(1)
-		WriteU8(TYPE_ENUM)
-		TypeWrites.Enum(V)
-	elseif T == "table" then
-		Allocate(1)
-		WriteU8(TYPE_TABLE)
-		for K, Val in pairs(V) do
-			WriteAny(K)
-			WriteAny(Val)
+		if #V == 0 then
+			Allocate(1); WriteU8(TYPE_EMPTY_STRING)
+		else
+			Allocate(1); WriteU8(TYPE_STRING); TypeWrites.String(V)
 		end
-		Allocate(1)
-		WriteU8(TYPE_NIL)
+	elseif T == "buffer" then
+		Allocate(1); WriteU8(TYPE_BUFFER); TypeWrites.Buffer(V)
+	elseif T == "Vector2" then
+		Allocate(9); WriteU8(TYPE_VECTOR2); TypeWrites.Vector2(V)
+	elseif T == "Vector3" then
+		if V.X == 0 and V.Y == 0 and V.Z == 0 then
+			Allocate(1); WriteU8(TYPE_ZERO_VECTOR3)
+		else
+			Allocate(13); WriteU8(TYPE_VECTOR3); TypeWrites.Vector3(V)
+		end
+	elseif T == "CFrame" then
+		if V == CFrame.identity then
+			Allocate(1); WriteU8(TYPE_IDENTITY_CFRAME)
+		else
+			Allocate(26); WriteU8(TYPE_CFRAME); TypeWrites.CFrame(V)
+		end
+	elseif T == "Color3" then
+		Allocate(4); WriteU8(TYPE_COLOR3); TypeWrites.Color3(V)
+	elseif T == "Instance" then
+		Allocate(1); WriteU8(TYPE_INSTANCE); WriteInstance(V)
+	elseif T == "EnumItem" then
+		Allocate(1); WriteU8(TYPE_ENUM); TypeWrites.Enum(V)
+	elseif T == "table" then
+		Allocate(1); WriteU8(TYPE_TABLE)
+		for K, Val in pairs(V) do
+			WriteAny(K); WriteAny(Val)
+		end
+		Allocate(1); WriteU8(TYPE_NIL)
 	else
 		if Config.Debug.LogWarnings then
 			warn("Unsupported type: " .. T)
 		end
-		Allocate(1)
-		WriteU8(TYPE_NIL)
+		Allocate(1); WriteU8(TYPE_NIL)
 	end
 end
 
 local function ReadAny(): any
 	local TypeId = ReadU8()
 	if TypeId == TYPE_NIL then return nil
-	elseif TypeId == TYPE_BOOL then return ReadU8() == 1
+	elseif TypeId == TYPE_BOOL_TRUE then return true
+	elseif TypeId == TYPE_BOOL_FALSE then return false
+	elseif TypeId == TYPE_ZERO then return 0
+	elseif TypeId == TYPE_ONE then return 1
 	elseif TypeId == TYPE_NUMBER then return ReadF64()
 	elseif TypeId == TYPE_STRING then return TypeReads.String()
+	elseif TypeId == TYPE_EMPTY_STRING then return ""
 	elseif TypeId == TYPE_BUFFER then return TypeReads.Buffer()
 	elseif TypeId == TYPE_VECTOR2 then return TypeReads.Vector2()
 	elseif TypeId == TYPE_VECTOR3 then return TypeReads.Vector3()
+	elseif TypeId == TYPE_ZERO_VECTOR3 then return Vector3.zero
 	elseif TypeId == TYPE_CFRAME then return TypeReads.CFrame()
+	elseif TypeId == TYPE_IDENTITY_CFRAME then return CFrame.identity
 	elseif TypeId == TYPE_COLOR3 then return TypeReads.Color3()
 	elseif TypeId == TYPE_INSTANCE then return ReadInstance()
 	elseif TypeId == TYPE_ENUM then return TypeReads.Enum()
 	elseif TypeId == TYPE_TABLE then
-		local T = {}
+		local Tbl = {}
 		repeat
 			local K = ReadAny()
 			if K == nil then break end
-			T[K] = ReadAny()
+			Tbl[K] = ReadAny()
 		until false
-		return T
+		return Tbl
 	elseif TypeId == TYPE_INT_U8 then return ReadU8()
 	elseif TypeId == TYPE_INT_U16 then return ReadU16()
 	elseif TypeId == TYPE_INT_U32 then return ReadU32()
 	elseif TypeId == TYPE_INT_I16 then return ReadI16()
 	elseif TypeId == TYPE_INT_I32 then return ReadI32()
+	elseif TypeId == TYPE_NEGATED_INT_U8 then return -ReadU8()
 	end
 	return nil
 end
@@ -530,19 +872,19 @@ local function Export()
 	return ActiveCursor
 end
 
-local function Truncate()
-	local Trun = buffer.create(BufferOffset)
-	buffer.copy(Trun, 0, ActiveBuffer, 0, BufferOffset)
+local function Truncate(): (buffer, {Instance}?)
+	local Trun = BufferCreate(BufferOffset)
+	BufferCopy(Trun, 0, ActiveBuffer, 0, BufferOffset)
 	return Trun, if InstancesOffset == 0 then nil else Instances
 end
 
-local function ResetCursor(Cursor: Cursor)
-	Cursor.BufferOffset = 0
-	Cursor.InstancesOffset = 0
-	table.clear(Cursor.Instances)
-	if Cursor.BufferLength > BASE_BUFFER_SIZE * 4 then
-		Cursor.Buffer = buffer.create(BASE_BUFFER_SIZE)
-		Cursor.BufferLength = BASE_BUFFER_SIZE
+local function ResetCursor(C: Cursor)
+	C.BufferOffset = 0
+	C.InstancesOffset = 0
+	table.clear(C.Instances)
+	if C.BufferLength > BASE_BUFFER_SIZE * 4 then
+		C.Buffer = BufferCreate(BASE_BUFFER_SIZE)
+		C.BufferLength = BASE_BUFFER_SIZE
 	end
 end
 
@@ -590,26 +932,26 @@ local function ApplyDelta(_LastData: {any}?, Delta: {any}): {any}
 	return Delta
 end
 
-export type RequestResponse<A..., B...> = {
+export type RequestResponse = {
 	RequestSchema: {any},
 	ResponseSchema: {any},
 	Timeout: number,
 }
 
-export type Packet<A..., B...> = {
+export type Packet = {
 	Id: number,
 	Name: string?,
 	Reliable: boolean,
 	UseDelta: boolean,
-	RequestResponse: RequestResponse<A..., B...>?,
-	OnServerEvent: Signal<(Player, A...)>,
-	OnClientEvent: Signal<A...>,
-	OnServerInvoke: ((Player: Player, A...) -> B...)?,
-	OnClientInvoke: ((A...) -> B...)?,
-	Fire: (Self: Packet<A..., B...>, A...) -> B...,
-	FireClient: (Self: Packet<A..., B...>, Player: Player, A...) -> B...,
-	FireAllClients: (Self: Packet<A..., B...>, A...) -> (),
-	SetRequestResponse: (Self: Packet<A..., B...>, ResponseSchema: {any}, Timeout: number?) -> Packet<A..., B...>,
+	RequestResponse: RequestResponse?,
+	OnServerEvent: Signal<(Player, ...any)>,
+	OnClientEvent: Signal<...any>,
+	OnServerInvoke: ((Player, ...any) -> ...any)?,
+	OnClientInvoke: ((...any) -> ...any)?,
+	Fire: (self: Packet, ...any) -> ...any,
+	FireClient: (self: Packet, Player: Player, ...any) -> ...any,
+	FireAllClients: (self: Packet, ...any) -> (),
+	SetRequestResponse: (self: Packet, ResponseSchema: {any}, Timeout: number?) -> Packet,
 }
 
 local Sequena = { Types = Types, Config = Config }
@@ -635,7 +977,7 @@ local PlayerEventCounts: { [Player]: { Count: number, Reset: number } } = {}
 
 local function CreateCursor(): Cursor
 	return {
-		Buffer = buffer.create(BASE_BUFFER_SIZE),
+		Buffer = BufferCreate(BASE_BUFFER_SIZE),
 		BufferLength = BASE_BUFFER_SIZE,
 		BufferOffset = 0,
 		Instances = {},
@@ -666,19 +1008,19 @@ local function GetCursor(Player: Player?, Reliable: boolean): Cursor
 				if not BroadcastReliableCursor then
 					BroadcastReliableCursor = CreateCursor()
 				end
-				return BroadcastReliableCursor
+				return BroadcastReliableCursor :: Cursor
 			else
 				if not BroadcastUnreliableCursor then
 					BroadcastUnreliableCursor = CreateCursor()
 				end
-				return BroadcastUnreliableCursor
+				return BroadcastUnreliableCursor :: Cursor
 			end
 		end
 		local Cursors = if Reliable then PlayerReliableCursors else PlayerUnreliableCursors
-		if not Cursors[Player] then
-			Cursors[Player] = CreateCursor()
+		if not Cursors[Player :: any] then
+			Cursors[Player :: any] = CreateCursor()
 		end
-		return Cursors[Player]
+		return Cursors[Player :: any]
 	else
 		local Cursors = if Reliable then PlayerReliableCursors else PlayerUnreliableCursors
 		local Cursor = Cursors[SERVER_KEY]
@@ -743,49 +1085,48 @@ local function PrepareSchema(Schema: {any}): ({any}, {any})
 end
 
 local function CompressBuffer(B: buffer): (buffer, boolean)
-	if buffer.len(B) > COMPRESSION_THRESHOLD then
+	if BufferLen(B) > COMPRESSION_THRESHOLD then
 		local Compressed = LZAV.compress(B)
-		local FinalBuffer = buffer.create(buffer.len(Compressed) + 4)
-		buffer.writeu32(FinalBuffer, 0, buffer.len(B))
-		buffer.copy(FinalBuffer, 4, Compressed, 0, buffer.len(Compressed))
+		local CompressedLen = BufferLen(Compressed)
+		local FinalBuffer = BufferCreate(CompressedLen + 4)
+		BufferWriteU32(FinalBuffer, 0, BufferLen(B))
+		BufferCopy(FinalBuffer, 4, Compressed, 0, CompressedLen)
 		return FinalBuffer, true
 	end
 	return B, false
 end
 
 local function DecompressBuffer(Incoming: buffer, Compressed: boolean): buffer
-	if not Compressed then 
-		return Incoming 
+	if not Compressed then
+		return Incoming
 	end
 
-	local incomingLen = buffer.len(Incoming)
-	if incomingLen < 4 then
+	local IncomingLen = BufferLen(Incoming)
+	if IncomingLen < 4 then
 		error("Invalid compressed buffer: missing size header")
 	end
 
-	local DecompressedSize = buffer.readu32(Incoming, 0)
+	local DecompressedSize = BufferReadU32(Incoming, 0)
 
-	-- known exploit, a "exploit" can set DecompressedSize to (eg.) 4,294,967,295 causing server memory overload
 	if DecompressedSize > MAX_BUFFER_SIZE then
 		error("Decompression size exceeds limit")
 	end
 
-	local payloadSize = incomingLen - 4
+	local PayloadSize = IncomingLen - 4
 
-	-- prevents assert crash
-	if payloadSize < 10 and DecompressedSize > 0 then
+	if PayloadSize < 10 and DecompressedSize > 0 then
 		error("Compressed payload too small for LZAV")
 	end
 
-	local CompressedData = buffer.create(payloadSize)
-	if payloadSize > 0 then
-		buffer.copy(CompressedData, 0, Incoming, 4, payloadSize)
+	local CompressedData = BufferCreate(PayloadSize)
+	if PayloadSize > 0 then
+		BufferCopy(CompressedData, 0, Incoming, 4, PayloadSize)
 	end
 
 	return LZAV.decompress(CompressedData, DecompressedSize)
 end
 
-function Sequena.Define<A..., B...>(Schema: {any}, Reliable: boolean?, Name: string?, UseDelta: boolean?): Packet<A..., B...>
+function Sequena.Define(Schema: {any}, Reliable: boolean?, Name: string?, UseDelta: boolean?): Packet
 	local Id = PacketCount
 	PacketCount += 1
 
@@ -919,13 +1260,13 @@ function Sequena.Define<A..., B...>(Schema: {any}, Reliable: boolean?, Name: str
 	return Self
 end
 
-function Sequena.CreatePacket<A..., B...>(Name: string)
-	local Builder = {
-		Schema = {},
+function Sequena.CreatePacket(Name: string)
+	local Builder: {[string]: any} = {
+		Schema = {} :: {any},
 		Reliable = Config.Network.DefaultReliable,
 		UseDelta = false,
 		Timeout = Config.Network.DefaultTimeout,
-		ResponseSchema = nil,
+		ResponseSchema = nil :: {any}?,
 	}
 	function Builder:SetSchema(Schema: {any})
 		Builder.Schema = Schema
@@ -944,27 +1285,27 @@ function Sequena.CreatePacket<A..., B...>(Name: string)
 		Builder.Timeout = Timeout or Config.Network.DefaultTimeout
 		return Builder
 	end
-	function Builder:Build(): Packet<A..., B...>
-		local Packet = Sequena.Define(Builder.Schema, Builder.Reliable, Name, Builder.UseDelta)
+	function Builder:Build(): Packet
+		local P = Sequena.Define(Builder.Schema, Builder.Reliable, Name, Builder.UseDelta)
 		if Builder.ResponseSchema then
-			Packet:SetRequestResponse(Builder.ResponseSchema, Builder.Timeout)
+			P:SetRequestResponse(Builder.ResponseSchema, Builder.Timeout)
 		end
-		return Packet
+		return P
 	end
 	return Builder
 end
 
-function Sequena.Listen(Packet: Packet<any, any>, Callback: (any) -> any)
+function Sequena.Listen(P: Packet, Callback: (...any) -> ...any)
 	if RunService:IsServer() then
-		Packet.OnServerInvoke = Callback :: any
+		P.OnServerInvoke = Callback :: any
 	else
-		Packet.OnClientInvoke = Callback :: any
+		P.OnClientInvoke = Callback :: any
 	end
 end
 
-local function ResolvePacket(Target: Packet<any, any> | string | number): Packet<any, any>?
-	if type(Target) == "table" and Target.Fire and Target.Id ~= nil then
-		return Target :: Packet<any, any>
+local function ResolvePacket(Target: Packet | string | number): Packet?
+	if type(Target) == "table" and (Target :: any).Fire and (Target :: any).Id ~= nil then
+		return Target :: Packet
 	end
 	if type(Target) == "number" then
 		local Entry = Registry[Target]
@@ -980,22 +1321,22 @@ local function ResolvePacket(Target: Packet<any, any> | string | number): Packet
 	return nil
 end
 
-function Sequena.Fire(Target: Packet<any, any> | string | number, ...)
-	local Packet = ResolvePacket(Target)
-	if not Packet then return end
-	Packet:Fire(...)
+function Sequena.Fire(Target: Packet | string | number, ...: any)
+	local P = ResolvePacket(Target)
+	if not P then return end
+	P:Fire(...)
 end
 
-function Sequena.FireClient(Player: Player, Target: Packet<any, any> | string | number, ...)
-	local Packet = ResolvePacket(Target)
-	if not Packet then return end
-	Packet:FireClient(Player, ...)
+function Sequena.FireClient(Player: Player, Target: Packet | string | number, ...: any)
+	local P = ResolvePacket(Target)
+	if not P then return end
+	P:FireClient(Player, ...)
 end
 
-function Sequena.FireAllClients(Target: Packet<any, any> | string | number, ...)
-	local Packet = ResolvePacket(Target)
-	if not Packet then return end
-	Packet:FireAllClients(...)
+function Sequena.FireAllClients(Target: Packet | string | number, ...: any)
+	local P = ResolvePacket(Target)
+	if not P then return end
+	P:FireAllClients(...)
 end
 
 local function HandleSuspicious(Player: Player, Reason: string)
@@ -1013,7 +1354,7 @@ local function Process(Sender: Player?, Incoming: buffer, Inst: {Instance}?, Rel
 
 		Import({
 			Buffer = ProcessBuffer,
-			BufferLength = buffer.len(ProcessBuffer),
+			BufferLength = BufferLen(ProcessBuffer),
 			BufferOffset = 0,
 			Instances = Inst or {},
 			InstancesOffset = 0
@@ -1025,7 +1366,7 @@ local function Process(Sender: Player?, Incoming: buffer, Inst: {Instance}?, Rel
 
 			if not Entry then
 				if Sender then
-					HandleSuspicious(Sender, `Unknown packet ID: {PacketId}`)
+					HandleSuspicious(Sender :: Player, `Unknown packet ID: {PacketId}`)
 				end
 				break
 			end
@@ -1036,14 +1377,14 @@ local function Process(Sender: Player?, Incoming: buffer, Inst: {Instance}?, Rel
 					YieldId -= 128
 					if Config.Security.ValidateYieldIds then
 						if RunService:IsServer() then
-							local Yields = PlayerYields[Sender]
+							local Yields = PlayerYields[Sender :: Player]
 							if not Yields or not Yields[YieldId] then
-								HandleSuspicious(Sender, "Invalid yield ID in response")
+								HandleSuspicious(Sender :: Player, "Invalid yield ID in response")
 								return
 							end
 						else
 							if not ClientYields[YieldId] then
-								HandleSuspicious(Sender, "Invalid yield ID in response")
+								if Sender then HandleSuspicious(Sender :: Player, "Invalid yield ID in response") end
 								return
 							end
 						end
@@ -1054,18 +1395,18 @@ local function Process(Sender: Player?, Incoming: buffer, Inst: {Instance}?, Rel
 						Args[I] = Entry.ResponseReadFuncs[I]()
 					end
 					if RunService:IsServer() then
-						local Yields = PlayerYields[Sender]
+						local Yields = PlayerYields[Sender :: Player]
 						if Yields and Yields[YieldId] then
 							local YieldData = Yields[YieldId]
-							if YieldData.Timeout then task.cancel(YieldData.Timeout) end
-							task.spawn(YieldData.Thread, table.unpack(Args))
+							if YieldData.Timeout then TaskCancel(YieldData.Timeout) end
+							TaskSpawn(YieldData.Thread, table.unpack(Args))
 							Yields[YieldId] = nil
 						end
 					else
 						if ClientYields[YieldId] then
 							local YieldData = ClientYields[YieldId]
-							if YieldData.Timeout then task.cancel(YieldData.Timeout) end
-							task.spawn(YieldData.Thread, table.unpack(Args))
+							if YieldData.Timeout then TaskCancel(YieldData.Timeout) end
+							TaskSpawn(YieldData.Thread, table.unpack(Args))
 							ClientYields[YieldId] = nil
 						end
 					end
@@ -1075,11 +1416,12 @@ local function Process(Sender: Player?, Incoming: buffer, Inst: {Instance}?, Rel
 					for I = 1, N do
 						Args[I] = Entry.ReadFuncs[I]()
 					end
-					task.spawn(function()
+					TaskSpawn(function()
 						local ResponseArgs
+						local P = Entry.Packet :: Packet
 						if RunService:IsServer() then
-							if Entry.Packet.OnServerInvoke then
-								ResponseArgs = { Entry.Packet.OnServerInvoke(Sender, table.unpack(Args)) }
+							if P.OnServerInvoke then
+								ResponseArgs = { (P.OnServerInvoke :: any)(Sender :: Player, table.unpack(Args)) }
 							else
 								if Config.Debug.LogWarnings then
 									warn(`OnServerInvoke not set for packet {PacketId}`)
@@ -1087,8 +1429,8 @@ local function Process(Sender: Player?, Incoming: buffer, Inst: {Instance}?, Rel
 								return
 							end
 						else
-							if Entry.Packet.OnClientInvoke then
-								ResponseArgs = { Entry.Packet.OnClientInvoke(table.unpack(Args)) }
+							if P.OnClientInvoke then
+								ResponseArgs = { (P.OnClientInvoke :: any)(table.unpack(Args)) }
 							else
 								if Config.Debug.LogWarnings then
 									warn(`OnClientInvoke not set for packet {PacketId}`)
@@ -1117,12 +1459,12 @@ local function Process(Sender: Player?, Incoming: buffer, Inst: {Instance}?, Rel
 					Cache = {}
 					InboundDeltaCache[PacketId] = Cache
 				end
-				local TargetKey = if RunService:IsServer() then Sender else 1
+				local TargetKey: any = if RunService:IsServer() then Sender else 1
 				local Last = Cache[TargetKey]
 				local Args = ApplyDelta(Last, Delta)
 				Cache[TargetKey] = Delta
 				if RunService:IsServer() then
-					Entry.Packet.OnServerEvent:Fire(Sender, table.unpack(Args))
+					Entry.Packet.OnServerEvent:Fire(Sender :: Player, table.unpack(Args))
 				else
 					Entry.Packet.OnClientEvent:Fire(table.unpack(Args))
 				end
@@ -1224,8 +1566,8 @@ local function CheckAndFlushBatch(Cursor: Cursor, Player: Player?, Reliable: boo
 end
 
 if RunService:IsServer() then
-	ReliableRemote.OnServerEvent:Connect(function(Player, Compressed, ...)
-		if not CheckRateLimit(Player, buffer.len((...))) then
+	ReliableRemote.OnServerEvent:Connect(function(Player: Player, Compressed: any, Buf: buffer, Inst: {Instance}?)
+		if not CheckRateLimit(Player, BufferLen(Buf)) then
 			HandleSuspicious(Player, "Rate limit exceeded")
 			return
 		end
@@ -1233,18 +1575,18 @@ if RunService:IsServer() then
 			HandleSuspicious(Player, "Event rate limit exceeded")
 			return
 		end
-		Process(Player, ..., true, Compressed)
+		Process(Player, Buf, Inst, true, Compressed)
 	end)
-	UnreliableRemote.OnServerEvent:Connect(function(Player, Compressed, ...)
+	UnreliableRemote.OnServerEvent:Connect(function(Player: Player, Compressed: any, Buf: buffer, Inst: {Instance}?)
 		if not CheckEventRate(Player) then
 			HandleSuspicious(Player, "Event rate limit exceeded")
 			return
 		end
-		Process(Player, ..., false, Compressed)
+		Process(Player, Buf, Inst, false, Compressed)
 	end)
-	Players.PlayerRemoving:Connect(function(Player)
-		PlayerReliableCursors[Player] = nil
-		PlayerUnreliableCursors[Player] = nil
+	Players.PlayerRemoving:Connect(function(Player: Player)
+		PlayerReliableCursors[Player :: any] = nil
+		PlayerUnreliableCursors[Player :: any] = nil
 		PlayerYields[Player] = nil
 		PlayerRateLimits[Player] = nil
 		PlayerEventCounts[Player] = nil
@@ -1263,11 +1605,11 @@ if RunService:IsServer() then
 		end
 	end)
 else
-	ReliableRemote.OnClientEvent:Connect(function(Compressed, ...)
-		Process(nil, ..., true, Compressed)
+	ReliableRemote.OnClientEvent:Connect(function(Compressed: any, Buf: buffer, Inst: {Instance}?)
+		Process(nil, Buf, Inst, true, Compressed)
 	end)
-	UnreliableRemote.OnClientEvent:Connect(function(Compressed, ...)
-		Process(nil, ..., false, Compressed)
+	UnreliableRemote.OnClientEvent:Connect(function(Compressed: any, Buf: buffer, Inst: {Instance}?)
+		Process(nil, Buf, Inst, false, Compressed)
 	end)
 end
 
@@ -1276,20 +1618,28 @@ function Sequena.FlushImmediate()
 	FlushUnreliable()
 end
 
-function Sequena.GetPacketByName(Name: string): Packet<any, any>?
+function Sequena.GetPacketByName(Name: string): Packet?
 	local Id = NameRegistry[Name]
 	if not Id then return nil end
 	local Entry = Registry[Id]
 	return Entry and Entry.Packet
 end
 
-RunService.Heartbeat:Connect(function(_Dt)
+function Sequena.CreateCursor(): Cursor
+	return CreateCursor()
+end
+
+function Sequena.ResetCursor(C: Cursor)
+	ResetCursor(C)
+end
+
+RunService.Heartbeat:Connect(function(_Dt: number)
 	if RunService:IsServer() then
-		for Player, Cursor in PlayerReliableCursors do
-			CheckAndFlushBatch(Cursor, Player, true)
+		for Player, Cur in PlayerReliableCursors do
+			CheckAndFlushBatch(Cur, Player :: any, true)
 		end
-		for Player, Cursor in PlayerUnreliableCursors do
-			CheckAndFlushBatch(Cursor, Player, false)
+		for Player, Cur in PlayerUnreliableCursors do
+			CheckAndFlushBatch(Cur, Player :: any, false)
 		end
 	else
 		local ReliableCursor = PlayerReliableCursors[SERVER_KEY]
@@ -1312,43 +1662,5 @@ RunService.Heartbeat:Connect(function(_Dt)
 		end
 	end
 end)
-
-local TypeMap = {
-	String = "String",
-	Bool = "Bool",
-	Number = "F64",
-	Float = "F32",
-	U8 = "U8",
-	U16 = "U16",
-	U32 = "U32",
-	I8 = "I8",
-	I16 = "I16",
-	I32 = "I32",
-	Int = "I32",
-	Vector2 = "Vector2",
-	Vector3 = "Vector3",
-	CFrame = "CFrame",
-	Color3 = "Color3",
-	Instance = "Instance",
-	Buffer = "Buffer",
-	Enum = "Enum",
-	Table = "Table",
-	Any = "Table",
-}
-
-local PacketMeta = {
-	__index = TypeMap,
-	__call = function(_, Name, ...)
-		local schema = {...}
-		for i, v in ipairs(schema) do
-			if TypeMap[v] then schema[i] = TypeMap[v] end
-		end
-		return Sequena.Define(schema, true, Name)
-	end,
-}
-
-Sequena.Packet = setmetatable({}, PacketMeta)
-Sequena.Types = TypeMap
-
 
 return Sequena
