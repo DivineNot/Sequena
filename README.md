@@ -25,10 +25,10 @@ For more help, check out [the Rojo documentation](https://rojo.space/docs).
 
 ## Usage Example
 ```lua
-local MyPacket = Sequena.Define(
+local MyEvent = Sequena.Define(
     {"U8", "Vector3", "String"}, -- Schema
     true,                        -- Reliable
-    "PlayerState",               -- Name
+    "Action",                    -- Name
     true                         -- UseDelta
 )
 ```
