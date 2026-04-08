@@ -14,4 +14,21 @@ Next, open `Sequena.rbxlx` in Roblox Studio and start the Rojo server:
 rojo serve
 ```
 
+Wally & pesde Support,
+```bash
+wally add divinenot/sequena@0.1.1
+```
+(same for pesde)
+
+
 For more help, check out [the Rojo documentation](https://rojo.space/docs).
+
+## Usage Example
+```lua
+local MyPacket = Sequena.Define(
+    {"U8", "Vector3", "String"}, -- Schema
+    true,                        -- Reliable
+    "PlayerState",               -- Name
+    true                         -- UseDelta
+)
+```
