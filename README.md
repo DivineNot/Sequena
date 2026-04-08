@@ -32,3 +32,4 @@ local MyEvent = Sequena.Define(
     true                         -- UseDelta
 )
 ```
+For more help, join this Discord Server [Link](https://discord.gg/D5xKeWHsgN)
